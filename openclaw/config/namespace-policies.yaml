@@ -1,0 +1,26 @@
+# Namespace-level guardrails for OpenClaw (selfConfigure can mutate in-cluster state).
+# Apply after: kubectl create ns openclaw (or via openclaw.sh install/create flow).
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: openclaw-quota
+  namespace: openclaw
+spec:
+  hard:
+    persistentvolumeclaims: "10"
+    pods: "20"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: openclaw-defaults
+  namespace: openclaw
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      default:
+        cpu: 500m
+        memory: 512Mi

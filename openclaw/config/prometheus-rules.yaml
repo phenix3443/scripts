@@ -1,0 +1,98 @@
+# PrometheusRule for OpenClaw monitoring
+# Discovered automatically by kube-prometheus-stack Prometheus
+# (ruleSelectorNilUsesHelmValues: false).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: openclaw-alerts
+  namespace: openclaw
+spec:
+  groups:
+    - name: openclaw-operator
+      rules:
+        - alert: OpenClawOperatorDown
+          expr: up{job="openclaw-operator"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "OpenClaw Operator is down"
+            description: "The OpenClaw Operator pod has been unreachable for 5 minutes."
+
+        - alert: OpenClawReconcileErrors
+          expr: rate(openclaw_reconcile_total{result="error"}[10m]) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "OpenClaw Operator reconcile errors"
+            description: "Operator reconciliation errors detected in the last 10 minutes."
+
+        - alert: OpenClawReconcileSlow
+          expr: openclaw_reconcile_duration_seconds{quantile="0.99"} > 30
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "OpenClaw reconciliation is slow"
+            description: "p99 reconcile duration exceeds 30 seconds."
+
+    - name: openclaw-agents
+      rules:
+        - alert: OpenClawAgentNotReady
+          expr: openclaw_instance_phase{phase!="Running"} == 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "OpenClaw Agent {{ $labels.name }} not running"
+            description: "Agent {{ $labels.name }} has been in {{ $labels.phase }} phase for 10+ minutes."
+
+        - alert: OpenClawAgentHighMemory
+          expr: |
+            container_memory_usage_bytes{namespace="openclaw", container!=""}
+            / container_spec_memory_limit_bytes{namespace="openclaw", container!=""}
+            > 0.85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "OpenClaw container memory usage > 85%"
+            description: "Container {{ $labels.container }} in pod {{ $labels.pod }} is using {{ $value | humanizePercentage }} of its memory limit."
+
+        - alert: OpenClawAgentHighCPU
+          expr: |
+            rate(container_cpu_usage_seconds_total{namespace="openclaw", container!=""}[5m])
+            / container_spec_cpu_quota{namespace="openclaw", container!=""}
+            * container_spec_cpu_period{namespace="openclaw", container!=""}
+            > 0.85
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "OpenClaw container CPU usage > 85%"
+            description: "Container {{ $labels.container }} in pod {{ $labels.pod }} is using high CPU."
+
+        - alert: OpenClawPVCAlmostFull
+          expr: |
+            kubelet_volume_stats_used_bytes{namespace="openclaw"}
+            / kubelet_volume_stats_capacity_bytes{namespace="openclaw"}
+            > 0.85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "OpenClaw PVC usage > 85%"
+            description: "PVC {{ $labels.persistentvolumeclaim }} is {{ $value | humanizePercentage }} full."
+
+        - alert: OpenClawPodRestarting
+          expr: increase(kube_pod_container_status_restarts_total{namespace="openclaw"}[1h]) > 3
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "OpenClaw pod restarting frequently"
+            description: "Pod {{ $labels.pod }} has restarted {{ $value }} times in the last hour."
+
+# API spend: provider dashboards or billing alerts are not exposed as a standard kube metric here.
+# Track usage via SkyAPI / Aliyun consoles or export custom metrics if needed.

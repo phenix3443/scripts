@@ -1,0 +1,204 @@
+# OpenClaw Agent instance: hanbao
+# Generated from agent-template.yaml
+apiVersion: openclaw.rocks/v1alpha1
+kind: OpenClawInstance
+metadata:
+  name: hanbao
+  namespace: openclaw
+spec:
+  image:
+    repository: ghcr.io/openclaw/openclaw
+    tag: "2026.5.22"
+
+  envFrom:
+    - secretRef:
+        name: openclaw-api-keys
+    - secretRef:
+        name: openclaw-channel-keys
+    # - secretRef:
+    #     name: openclaw-mem0-keys
+
+  gateway:
+    existingSecret: hanbao-gateway-token-custom
+
+  config:
+    mergeMode: overwrite
+    raw:
+      channels:
+        telegram:
+          enabled: false
+      gateway:
+        mode: local
+        controlUi:
+          allowedOrigins:
+            - "https://hanbao.panghuli.tech"
+            - "https://hanbao.panghuli.cn"
+      models:
+        mode: replace
+        providers:
+          yls:
+            baseUrl: "https://code.ylsagi.com/codex"
+            apiKey: "${YLS_API_KEY}"
+            api: openai-responses
+            models:
+              - id: gpt-5.4
+                name: GPT-5.4
+              - id: gpt-5.4-mini
+                name: GPT-5.4 Mini
+              - id: gpt-5.3-codex
+                name: GPT-5.3 Codex
+              - id: gpt-5.3
+                name: GPT-5.3
+              - id: gpt-5.2-codex
+                name: GPT-5.2 Codex
+              - id: gpt-5.2
+                name: GPT-5.2
+              - id: gpt-5.1
+                name: GPT-5.1
+              - id: gpt-5.1-codex
+                name: GPT-5.1 Codex
+              - id: gpt-5.1-codex-mini
+                name: GPT-5.1 Codex Mini
+      agents:
+        defaults:
+          model:
+            primary: "yls/gpt-5.4-mini"
+            fallbacks:
+              - "yls/gpt-5.4"
+              - "yls/gpt-5.3-codex"
+          models:
+            "yls/gpt-5.4-mini": {}
+            "yls/gpt-5.4": {}
+            "yls/gpt-5.3-codex": {}
+            "yls/gpt-5.3": {}
+            "yls/gpt-5.2-codex": {}
+            "yls/gpt-5.2": {}
+            "yls/gpt-5.1": {}
+            "yls/gpt-5.1-codex": {}
+            "yls/gpt-5.1-codex-mini": {}
+
+  # ClawHub registry currently unavailable; skills loaded from bundled set
+  # skills:
+  #   - "@anthropic/mcp-server-fetch"
+
+  runtimeDeps:
+    pnpm: true
+
+  workspace:
+    initialFiles:
+      BOOTSTRAP.md: |
+        # Hanbao Bootstrap
+
+        你是 Hanbao。
+
+        你的工作原则：
+
+        - 你是唯一对外入口，始终由你和用户直接对话
+        - 简单任务直接自己完成，不要创建子 agent
+        - 只有复杂任务才允许使用子 agent
+        - 最终答复必须由你统一整理后输出
+        - 如果子 agent 的结果冲突，由你负责判断和收口
+
+        复杂任务通常指：
+
+        - 可以拆成两个或以上相互独立的子问题
+        - 子问题可以并行处理
+        - 最后需要统一汇总
+
+        默认禁止：
+
+        - 为了简单问答创建子 agent
+        - 无限制地连续创建子 agent
+        - 在没有必要时把任务拆得过细
+
+        如果不确定是否该创建子 agent，默认不要创建。
+      SUBAGENTS.md: |
+        # Hanbao Subagent Rules
+
+        只有在复杂任务中才允许使用子 agent。
+
+        使用规则：
+
+        - 同时最多创建 3 个子 agent
+        - 每个子 agent 一次只负责一个明确子任务
+        - 子 agent 应优先做分析、检索、整理、校对这类工作
+        - 子 agent 完成后，结果必须回到 Hanbao 统一汇总
+        - 最终结论、最终方案、最终回复只能由 Hanbao 输出
+
+        默认策略：
+
+        - 简单问题：Hanbao 直接回答
+        - 中等复杂任务：最多创建 1 个子 agent
+        - 明显可并行的复杂任务：最多创建 2 到 3 个子 agent
+
+        子 agent 返回结果时应尽量包含：
+
+        - 它负责的子任务是什么
+        - 它发现了什么
+        - 它建议怎么做
+        - 它是否完成
+        - 它是否存在不确定性或风险
+
+        禁止事项：
+
+        - 子 agent 不要无限继续派生更多子 agent
+        - 子 agent 不要脱离自己的子任务范围
+        - 子 agent 不要抢占 Hanbao 的最终对外答复职责
+
+  chromium:
+    enabled: false
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+  storage:
+    persistence:
+      enabled: true
+      size: 10Gi
+
+  autoUpdate:
+    enabled: false
+    checkInterval: "24h"
+    backupBeforeUpdate: false
+    rollbackOnFailure: true
+
+  observability:
+    metrics:
+      enabled: false
+
+  security:
+    networkPolicy:
+      enabled: true
+      allowedIngressNamespaces:
+        - ingress-nginx
+      additionalEgress:
+        - to:
+            - ipBlock:
+                cidr: 0.0.0.0/0
+          ports:
+            - port: 80
+              protocol: TCP
+            - port: 443
+              protocol: TCP
+
+  availability:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: node.longhorn.io/create-default-disk
+                  operator: In
+                  values: ["true"]
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 80
+            preference:
+              matchExpressions:
+                - key: kubernetes.io/arch
+                  operator: In
+                  values: ["amd64"]

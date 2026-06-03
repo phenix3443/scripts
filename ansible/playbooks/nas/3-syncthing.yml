@@ -1,0 +1,189 @@
+---
+# Stage 3: Install and configure Syncthing on me
+# Run from repo root:
+#   ansible-playbook -i ansible/inventory/testing-k3s.yml ansible/playbooks/nas/3-syncthing.yml --vault-password-file ansible/.vault_pass --limit me
+
+- name: Stage 3 - Install Syncthing
+  hosts: me
+  become: true
+  become_method: sudo
+  gather_facts: true
+  vars:
+    syncthing_service_user: syncthing
+    syncthing_service_group: syncthing
+    syncthing_config_file: "{{ syncthing_config_dir }}/config.xml"
+
+  pre_tasks:
+    - name: Skip hosts where Syncthing is not enabled
+      ansible.builtin.meta: end_host
+      when: not (syncthing_enabled | default(false))
+
+    - name: Validate Syncthing directories and GUI settings
+      ansible.builtin.assert:
+        that:
+          - syncthing_config_dir is defined
+          - syncthing_config_dir | trim | length > 0
+          - syncthing_data_dir is defined
+          - syncthing_data_dir | trim | length > 0
+          - syncthing_gui_address is defined
+          - syncthing_gui_address | trim | length > 0
+          - syncthing_gui_user is defined
+          - syncthing_gui_user | trim | length > 0
+          - syncthing_gui_password is defined
+          - syncthing_gui_password | trim | length > 0
+          - syncthing_default_folder_id is defined
+          - syncthing_default_folder_id | trim | length > 0
+          - syncthing_default_folder_label is defined
+          - syncthing_default_folder_label | trim | length > 0
+        fail_msg: "Syncthing host variables must be set on me before running this playbook"
+
+  tasks:
+    - name: Install Syncthing package
+      ansible.builtin.apt:
+        name: syncthing
+        state: present
+        update_cache: true
+
+    - name: Create Syncthing system group
+      ansible.builtin.group:
+        name: "{{ syncthing_service_group }}"
+        system: true
+        state: present
+
+    - name: Create Syncthing system user
+      ansible.builtin.user:
+        name: "{{ syncthing_service_user }}"
+        group: "{{ syncthing_service_group }}"
+        home: "{{ syncthing_config_dir }}"
+        shell: /usr/sbin/nologin
+        create_home: false
+        system: true
+        state: present
+
+    - name: Create Syncthing configuration directory
+      ansible.builtin.file:
+        path: "{{ syncthing_config_dir }}"
+        state: directory
+        owner: "{{ syncthing_service_user }}"
+        group: "{{ syncthing_service_group }}"
+        mode: "0750"
+
+    - name: Create Syncthing data directory
+      ansible.builtin.file:
+        path: "{{ syncthing_data_dir }}"
+        state: directory
+        owner: "{{ syncthing_service_user }}"
+        group: "{{ syncthing_service_group }}"
+        mode: "0750"
+
+    - name: Generate initial Syncthing config with GUI credentials
+      ansible.builtin.command:
+        argv:
+          - syncthing
+          - generate
+          - "--home={{ syncthing_config_dir }}"
+          - "--gui-user={{ syncthing_gui_user }}"
+          - "--gui-password={{ syncthing_gui_password }}"
+      become_user: "{{ syncthing_service_user }}"
+      no_log: true
+      args:
+        creates: "{{ syncthing_config_file }}"
+
+    - name: Configure Syncthing GUI listen address
+      ansible.builtin.replace:
+        path: "{{ syncthing_config_file }}"
+        regexp: '(?s)(<gui[^>]*>.*?<address>)[^<]+(</address>)'
+        replace: '\g<1>{{ syncthing_gui_address }}\g<2>'
+      notify: Restart Syncthing
+
+    - name: Point managed Syncthing folder at the host data directory
+      ansible.builtin.replace:
+        path: "{{ syncthing_config_file }}"
+        regexp: '(<folder id="{{ syncthing_default_folder_id }}" label=")[^"]+(" path=")[^"]+(")'
+        replace: '\g<1>{{ syncthing_default_folder_label }}\g<2>{{ syncthing_data_dir }}\g<3>'
+      notify: Restart Syncthing
+
+    - name: Align default new-folder base path with the host data directory
+      ansible.builtin.replace:
+        path: "{{ syncthing_config_file }}"
+        regexp: '(<defaults>\s*<folder id="" label="" path=")[^"]+(")'
+        replace: '\g<1>{{ syncthing_data_dir }}\g<2>'
+      notify: Restart Syncthing
+
+    - name: Install Syncthing systemd unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/syncthing.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Syncthing - Open Source Continuous File Synchronization
+          Documentation=man:syncthing(1)
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          User={{ syncthing_service_user }}
+          Group={{ syncthing_service_group }}
+          Environment=STNOUPGRADE=1
+          ExecStart=/usr/bin/syncthing --no-browser --no-restart --home={{ syncthing_config_dir }}
+          Restart=on-failure
+          RestartSec=5
+          SuccessExitStatus=3 4
+          WorkingDirectory={{ syncthing_data_dir }}
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Reload systemd
+
+    - name: Flush handlers before service start
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start Syncthing service
+      ansible.builtin.systemd:
+        name: syncthing
+        enabled: true
+        state: started
+
+  post_tasks:
+    - name: Verify Syncthing service state
+      ansible.builtin.command:
+        cmd: systemctl is-active syncthing
+      register: syncthing_service_status
+      changed_when: false
+      failed_when: syncthing_service_status.stdout.strip() != "active"
+
+    - name: Verify Syncthing GUI port is listening
+      ansible.builtin.command:
+        cmd: ss -ltn sport = :8384
+      register: syncthing_port_check
+      changed_when: false
+      failed_when: syncthing_port_check.rc != 0
+
+    - name: Verify Syncthing folder path is managed
+      ansible.builtin.command:
+        cmd: grep -F 'path="{{ syncthing_data_dir }}"' {{ syncthing_config_file }}
+      register: syncthing_folder_path_check
+      changed_when: false
+      failed_when: syncthing_folder_path_check.rc != 0
+
+    - name: Syncthing deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Syncthing Installation Complete!"
+          - "=========================================="
+          - "✓ Service Status: {{ syncthing_service_status.stdout.strip() }}"
+          - "✓ GUI Address: {{ syncthing_gui_address }}"
+          - "✓ Data Directory: {{ syncthing_data_dir }}"
+          - "✓ UI Host: {{ syncthing_ui_host | default('not set') }}"
+          - "=========================================="
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart Syncthing
+      ansible.builtin.systemd:
+        name: syncthing
+        state: restarted

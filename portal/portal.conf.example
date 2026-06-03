@@ -1,0 +1,26 @@
+# 公司门户自动登录配置示例
+# 复制为 portal.conf 并按实际环境修改；portal.conf 不应提交到 Git。
+
+# 门户根 URL（无末尾斜杠）
+PORTAL_BASE_URL=https://192.168.222.250:19008
+
+# 探测用 URL：请求该地址时若未认证会被重定向到门户
+PROBE_URL=http://www.baidu.com
+
+# 用于判断「被重定向到门户」的 URL 特征（最终 URL 包含此字符串即认为需登录）
+PORTAL_URL_PATTERN=192.168.222.250:19008
+
+# 登录接口：可为相对路径（拼在 PORTAL_BASE_URL 后）或完整 URL
+# 需在浏览器 F12 -> Network 中抓取实际 POST 的 URL 后填写
+LOGIN_ENDPOINT=/portalpage/your-portal-id/your-path/doLogin
+
+# 表单字段名（与门户页面 POST body 一致）
+USERNAME_FIELD=username
+PASSWORD_FIELD=password
+
+# 可选：额外 POST 参数（如 ac-ip、uaddress、umac 等，与抓包一致）
+# EXTRA_POST_PARAMS=ac-ip=192.168.219.1&uaddress=192.168.218.51&umac=54d9c6f96518
+
+# 可选：若门户使用自签名证书，在运行前设置环境变量：
+#   export CURL_OPTS="-k"
+# 或在 systemd 的 service 中设置 Environment="CURL_OPTS=-k"

@@ -1,0 +1,16 @@
+# VPS Nodes Group Variables
+
+# Timezone
+timezone: Asia/Shanghai
+
+# ppanel-node deployment defaults
+ppanel_node_version: latest
+ppanel_node_release_repo: perfect-panel/PPanel-node
+ppanel_node_install_dir: /usr/local/PPanel-node
+ppanel_node_config_dir: /etc/PPanel-node
+ppanel_node_service_name: PPanel-node
+ppanel_node_log_level: warn
+ppanel_node_log_output: ""
+ppanel_node_access_log: none
+ppanel_node_api_host: https://admin-ppanel.panghuli.tech
+ppanel_node_timeout: 30

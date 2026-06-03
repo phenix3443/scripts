@@ -1,0 +1,38 @@
+# Longhorn RecurringJob for OpenClaw PVC snapshot + remote backup
+#
+# Prerequisites for backup (task: backup):
+#   1. Longhorn UI → Settings → Backup Target: configure S3-compatible store (MinIO, R2, etc.)
+#   2. Ensure PVCs use volume with recurring job group "openclaw" (Operator labels volumes; verify in UI)
+#
+# Snapshot runs without a backup target; backup jobs fail until the target is configured.
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: openclaw-snapshot
+  namespace: longhorn-system
+spec:
+  name: openclaw-snapshot
+  cron: "0 */6 * * *"
+  task: snapshot
+  groups:
+    - openclaw
+  retain: 4
+  concurrency: 1
+  labels:
+    app: openclaw
+---
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: openclaw-daily-backup
+  namespace: longhorn-system
+spec:
+  name: openclaw-daily-backup
+  cron: "0 2 * * *"
+  task: backup
+  groups:
+    - openclaw
+  retain: 3
+  concurrency: 1
+  labels:
+    app: openclaw

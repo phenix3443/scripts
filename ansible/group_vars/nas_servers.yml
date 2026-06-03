@@ -1,0 +1,31 @@
+---
+# Group variables for NAS servers
+# Override these in host_vars/<hostname>.yml for specific hosts
+
+# Timezone
+timezone: Asia/Shanghai
+
+# Alert email for monitoring notifications
+alert_email: "your-email@example.com"
+
+# NVMe monitoring thresholds
+nvme_temp_threshold: 70  # Celsius
+disk_usage_threshold: 80  # Percentage
+
+# OMV configuration
+omv_web_port: 80
+omv_admin_user: admin
+# Default password is 'openmediavault' - CHANGE IT IMMEDIATELY after first login
+
+# Cloudflare Tunnel
+# cloudflare_tunnel_token: defined in vault.yml
+
+# Backup configuration
+backup_enabled: false
+backup_destination: /mnt/backup
+backup_schedule: "0 2 * * *"  # Daily at 2 AM
+
+# Network configuration
+# ansible_host: defined in inventory
+# ansible_user: defined in inventory
+ansible_python_interpreter: /usr/bin/python3

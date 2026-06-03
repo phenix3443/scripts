@@ -1,0 +1,263 @@
+---
+# Stage 0: Install OpenMediaVault on Raspberry Pi 5
+# Prerequisites:
+#   - Fresh Raspberry Pi OS Lite (64-bit) installed on NVMe
+#   - SSH access configured
+#   - User has sudo privileges
+#
+# Run from repo root:
+#   ansible-playbook -i ansible/inventory/nas.yml ansible/playbooks/nas/0-omv-install.yml --vault-password-file ansible/.vault_pass --ask-become-pass
+#
+# First run: add --ask-become-pass; this playbook configures passwordless sudo.
+
+- name: Stage 0 - Install OpenMediaVault
+  hosts: nas_servers
+  become: true
+  become_method: sudo
+  gather_facts: true
+  vars:
+    repo_root: "{{ playbook_dir }}/../../.."
+    home_lab_dest: /opt/home-lab
+    timezone: Asia/Shanghai
+    omv_install_script_url: https://github.com/OpenMediaVault-Plugin-Developers/installScript/raw/master/install
+  
+  tasks:
+    - name: Configure passwordless sudo for Ansible user
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/nopass
+        content: "Defaults:{{ ansible_user }} !requiretty\n{{ ansible_user }} ALL=(ALL) NOPASSWD: ALL\n"
+        mode: "0440"
+        validate: "visudo -cf %s"
+
+    - name: Sync home-lab repo to target
+      ansible.builtin.synchronize:
+        src: "{{ repo_root }}/"
+        dest: "{{ home_lab_dest }}"
+        delete: false
+        use_ssh_args: true
+        rsync_opts:
+          - "--no-owner"
+          - "--no-group"
+          - "--exclude=*.pyc"
+          - "--exclude=*.log"
+          - "--exclude=.git"
+
+    - name: Set ownership of home-lab to ansible user
+      ansible.builtin.file:
+        path: "{{ home_lab_dest }}"
+        state: directory
+        recurse: true
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+
+    - name: Update APT cache
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Upgrade all packages
+      ansible.builtin.apt:
+        upgrade: dist
+        autoremove: yes
+        autoclean: yes
+      register: apt_upgrade
+      async: 1800
+      poll: 30
+
+    - name: Install base packages
+      ansible.builtin.apt:
+        name:
+          - curl
+          - wget
+          - git
+          - vim
+          - htop
+          - smartmontools
+          - nvme-cli
+          - python3-minimal
+          - python3-pip
+        state: present
+
+    - name: Set timezone
+      ansible.builtin.timezone:
+        name: "{{ timezone }}"
+
+    - name: Enable NTP time synchronization
+      ansible.builtin.command:
+        cmd: timedatectl set-ntp true
+      changed_when: false
+
+    - name: Check if running on Raspberry Pi
+      ansible.builtin.stat:
+        path: /sys/firmware/devicetree/base/model
+      register: raspi_model_file
+
+    - name: Read Raspberry Pi model
+      ansible.builtin.slurp:
+        src: /sys/firmware/devicetree/base/model
+      register: raspi_model_content
+      when: raspi_model_file.stat.exists
+
+    - name: Set Raspberry Pi facts
+      ansible.builtin.set_fact:
+        is_raspberry_pi: "{{ raspi_model_file.stat.exists }}"
+        raspberry_pi_model: "{{ (raspi_model_content.content | b64decode | trim) if raspi_model_file.stat.exists else 'N/A' }}"
+
+    - name: Display Raspberry Pi info
+      ansible.builtin.debug:
+        msg:
+          - "Is Raspberry Pi: {{ is_raspberry_pi }}"
+          - "Model: {{ raspberry_pi_model }}"
+      when: is_raspberry_pi
+
+    - name: Check NVMe device
+      ansible.builtin.stat:
+        path: "{{ nvme_device }}"
+      register: nvme_check
+      when: nvme_device is defined
+
+    - name: Verify NVMe device exists
+      ansible.builtin.fail:
+        msg: "NVMe device {{ nvme_device }} not found!"
+      when: nvme_device is defined and not nvme_check.stat.exists
+
+    - name: Get NVMe information
+      ansible.builtin.command:
+        cmd: nvme list
+      register: nvme_list
+      changed_when: false
+      when: nvme_device is defined
+
+    - name: Display NVMe information
+      ansible.builtin.debug:
+        msg: "{{ nvme_list.stdout_lines }}"
+      when: nvme_device is defined
+
+    - name: Optimize NVMe settings
+      when: nvme_device is defined
+      block:
+        - name: Enable NVMe power management
+          ansible.builtin.copy:
+            dest: /etc/modprobe.d/nvme.conf
+            content: |
+              options nvme_core default_ps_max_latency_us=5500
+            mode: "0644"
+
+        - name: Optimize filesystem mount options
+          ansible.builtin.replace:
+            path: /etc/fstab
+            regexp: '(^[^#].*\s+/\s+.*\s+)defaults(\s+.*)'
+            replace: '\1defaults,noatime,commit=60\2'
+            backup: yes
+
+        - name: Remount root filesystem with new options
+          ansible.builtin.command:
+            cmd: mount -o remount /
+          changed_when: false
+
+        - name: Set I/O scheduler to none for NVMe
+          ansible.builtin.copy:
+            dest: /etc/udev/rules.d/60-nvme-scheduler.rules
+            content: |
+              ACTION=="add|change", KERNEL=="nvme[0-9]n[0-9]", ATTR{queue/scheduler}="none"
+            mode: "0644"
+
+        - name: Enable fstrim timer for SSD TRIM
+          ansible.builtin.systemd:
+            name: fstrim.timer
+            enabled: yes
+            state: started
+
+    - name: Check if OMV is already installed
+      ansible.builtin.stat:
+        path: /usr/sbin/omv-engined
+      register: omv_check
+
+    - name: Install OpenMediaVault
+      when: not omv_check.stat.exists
+      block:
+        - name: Download OMV install script
+          ansible.builtin.get_url:
+            url: "{{ omv_install_script_url }}"
+            dest: /tmp/omv-install.sh
+            mode: "0755"
+
+        - name: Run OMV install script
+          ansible.builtin.shell: |
+            /tmp/omv-install.sh 2>&1 | tee /var/log/omv-install.log
+          args:
+            executable: /bin/bash
+          register: omv_install
+          async: 3600
+          poll: 30
+          environment:
+            DEBIAN_FRONTEND: noninteractive
+
+        - name: Display OMV installation output
+          ansible.builtin.debug:
+            msg: "{{ omv_install.stdout_lines }}"
+
+        - name: Remove install script
+          ansible.builtin.file:
+            path: /tmp/omv-install.sh
+            state: absent
+
+    - name: Wait for OMV services to start
+      ansible.builtin.wait_for:
+        port: 80
+        delay: 10
+        timeout: 300
+      when: not omv_check.stat.exists
+
+  post_tasks:
+    - name: Verify - Check OMV is installed
+      ansible.builtin.command:
+        cmd: dpkg -l openmediavault
+      register: omv_package
+      changed_when: false
+      failed_when: omv_package.rc != 0
+
+    - name: Verify - Check OMV web service
+      ansible.builtin.systemd:
+        name: openmediavault-engined
+      register: omv_service
+      failed_when: omv_service.status.ActiveState != 'active'
+
+    - name: Verify - Check NTP synchronization
+      ansible.builtin.command:
+        cmd: timedatectl status
+      register: ntp_status
+      changed_when: false
+
+    - name: Verify - Check NVMe health
+      ansible.builtin.command:
+        cmd: smartctl -H {{ nvme_device }}
+      register: nvme_health
+      changed_when: false
+      when: nvme_device is defined
+
+    - name: Get OMV version
+      ansible.builtin.command:
+        cmd: dpkg -l openmediavault | grep openmediavault | awk '{print $3}'
+      register: omv_version
+      changed_when: false
+
+    - name: Stage 0 verification summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "OMV Installation Complete!"
+          - "=========================================="
+          - "✓ OMV Version: {{ omv_version.stdout }}"
+          - "✓ OMV Service: {{ omv_service.status.ActiveState }}"
+          - "✓ Web Interface: http://{{ ansible_host }}"
+          - "✓ Default Login: admin / openmediavault"
+          - "✓ NTP Synchronized: {{ 'YES' if 'synchronized: yes' in ntp_status.stdout else 'NO' }}"
+          - "✓ NVMe Health: {{ nvme_health.stdout if nvme_device is defined else 'N/A' }}"
+          - "=========================================="
+          - "Next Steps:"
+          - "1. Access web interface: http://{{ ansible_host }}"
+          - "2. Login with admin / openmediavault"
+          - "3. CHANGE DEFAULT PASSWORD IMMEDIATELY"
+          - "4. Run monitoring setup: ansible-playbook nas/1-omv-monitoring.yml"
+          - "=========================================="

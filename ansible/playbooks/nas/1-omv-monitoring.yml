@@ -1,0 +1,281 @@
+---
+# Stage 1: Configure monitoring and health checks for OMV
+# Run from repo root:
+#   ansible-playbook -i ansible/inventory/nas.yml ansible/playbooks/nas/1-omv-monitoring.yml --vault-password-file ansible/.vault_pass
+
+- name: Stage 1 - Configure OMV Monitoring
+  hosts: nas_servers
+  become: true
+  become_method: sudo
+  gather_facts: true
+  vars:
+    home_lab_dest: /opt/home-lab
+    alert_email: "your-email@example.com"  # Override in host_vars
+    nvme_temp_threshold: 70
+    disk_usage_threshold: 80
+  
+  tasks:
+    - name: Create monitoring scripts directory
+      ansible.builtin.file:
+        path: /usr/local/bin
+        state: directory
+        mode: "0755"
+
+    - name: Deploy NVMe temperature monitoring script
+      ansible.builtin.copy:
+        dest: /usr/local/bin/nvme-temp-monitor.sh
+        content: |
+          #!/bin/bash
+          LOG_FILE="/var/log/nvme-temp.log"
+          ALERT_EMAIL="{{ alert_email }}"
+          TEMP_THRESHOLD={{ nvme_temp_threshold }}
+          
+          TEMP=$(nvme smart-log {{ nvme_device }} | grep temperature | awk '{print $3}')
+          
+          if [ "$TEMP" -gt "$TEMP_THRESHOLD" ]; then
+              echo "$(date): NVMe temperature is ${TEMP}°C" >> "$LOG_FILE"
+              if command -v mail &> /dev/null; then
+                  echo "NVMe temperature warning: ${TEMP}°C" | mail -s "NAS Alert: High NVMe Temperature" "$ALERT_EMAIL"
+              fi
+          fi
+        mode: "0755"
+      when: nvme_device is defined
+
+    - name: Deploy NAS health check script
+      ansible.builtin.copy:
+        dest: /usr/local/bin/nas-health-check.sh
+        content: |
+          #!/bin/bash
+          LOG_FILE="/var/log/nas-health.log"
+          ALERT_EMAIL="{{ alert_email }}"
+          
+          # Check disk space
+          DISK_USAGE=$(df -h / | awk 'NR==2 {print $5}' | sed 's/%//')
+          if [ "$DISK_USAGE" -gt {{ disk_usage_threshold }} ]; then
+              echo "$(date): Disk usage is ${DISK_USAGE}%" >> "$LOG_FILE"
+              if command -v mail &> /dev/null; then
+                  echo "Disk usage warning: ${DISK_USAGE}%" | mail -s "NAS Alert: High Disk Usage" "$ALERT_EMAIL"
+              fi
+          fi
+          
+          # Check OMV service
+          if ! systemctl is-active --quiet openmediavault-engined; then
+              echo "$(date): OMV service is down" >> "$LOG_FILE"
+              if command -v mail &> /dev/null; then
+                  echo "OMV service is down" | mail -s "NAS Alert: OMV Service Down" "$ALERT_EMAIL"
+              fi
+          fi
+          
+          # Check NVMe health (if applicable)
+          {% if nvme_device is defined %}
+          NVME_HEALTH=$(nvme smart-log {{ nvme_device }} | grep "critical_warning" | awk '{print $3}')
+          if [ "$NVME_HEALTH" != "0x00" ]; then
+              echo "$(date): NVMe critical warning detected" >> "$LOG_FILE"
+              if command -v mail &> /dev/null; then
+                  echo "NVMe health warning: $NVME_HEALTH" | mail -s "NAS Alert: NVMe Health Warning" "$ALERT_EMAIL"
+              fi
+          fi
+          
+          # Check NVMe SMART status
+          SMART_STATUS=$(smartctl -H {{ nvme_device }} | grep "SMART overall-health" | awk '{print $6}')
+          if [ "$SMART_STATUS" != "PASSED" ]; then
+              echo "$(date): NVMe SMART check failed" >> "$LOG_FILE"
+              if command -v mail &> /dev/null; then
+                  echo "NVMe SMART check failed" | mail -s "NAS Alert: NVMe SMART Failure" "$ALERT_EMAIL"
+              fi
+          fi
+          
+          # Check NVMe wear level
+          PERCENTAGE_USED=$(nvme smart-log {{ nvme_device }} | grep "percentage_used" | awk '{print $3}' | sed 's/%//')
+          if [ "$PERCENTAGE_USED" -gt 80 ]; then
+              echo "$(date): NVMe wear level is ${PERCENTAGE_USED}%" >> "$LOG_FILE"
+              if command -v mail &> /dev/null; then
+                  echo "NVMe wear warning: ${PERCENTAGE_USED}% used" | mail -s "NAS Alert: High NVMe Wear" "$ALERT_EMAIL"
+              fi
+          fi
+          {% endif %}
+        mode: "0755"
+
+    - name: Create systemd timer for NVMe temperature monitoring
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/nvme-temp-monitor.timer
+        content: |
+          [Unit]
+          Description=NVMe Temperature Monitor Timer
+          
+          [Timer]
+          OnBootSec=5min
+          OnUnitActiveSec=10min
+          
+          [Install]
+          WantedBy=timers.target
+        mode: "0644"
+      when: nvme_device is defined
+
+    - name: Create systemd service for NVMe temperature monitoring
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/nvme-temp-monitor.service
+        content: |
+          [Unit]
+          Description=NVMe Temperature Monitor
+          
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/nvme-temp-monitor.sh
+        mode: "0644"
+      when: nvme_device is defined
+
+    - name: Create systemd timer for health check
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/nas-health-check.timer
+        content: |
+          [Unit]
+          Description=NAS Health Check Timer
+          
+          [Timer]
+          OnBootSec=5min
+          OnUnitActiveSec=1h
+          
+          [Install]
+          WantedBy=timers.target
+        mode: "0644"
+
+    - name: Create systemd service for health check
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/nas-health-check.service
+        content: |
+          [Unit]
+          Description=NAS Health Check
+          
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/nas-health-check.sh
+        mode: "0644"
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: yes
+
+    - name: Enable and start NVMe temperature monitoring timer
+      ansible.builtin.systemd:
+        name: nvme-temp-monitor.timer
+        enabled: yes
+        state: started
+      when: nvme_device is defined
+
+    - name: Enable and start health check timer
+      ansible.builtin.systemd:
+        name: nas-health-check.timer
+        enabled: yes
+        state: started
+
+    - name: Create log rotation config for monitoring logs
+      ansible.builtin.copy:
+        dest: /etc/logrotate.d/nas-monitoring
+        content: |
+          /var/log/nvme-temp.log {
+              weekly
+              rotate 4
+              compress
+              missingok
+              notifempty
+          }
+          
+          /var/log/nas-health.log {
+              weekly
+              rotate 4
+              compress
+              missingok
+              notifempty
+          }
+        mode: "0644"
+
+    - name: Install monitoring dashboard script
+      ansible.builtin.copy:
+        dest: /usr/local/bin/nas-status.sh
+        content: |
+          #!/bin/bash
+          echo "=========================================="
+          echo "NAS Status Dashboard"
+          echo "=========================================="
+          echo ""
+          
+          echo "CPU Temperature:"
+          vcgencmd measure_temp
+          echo ""
+          
+          {% if nvme_device is defined %}
+          echo "NVMe Temperature:"
+          nvme smart-log {{ nvme_device }} | grep temperature
+          echo ""
+          
+          echo "NVMe Health:"
+          smartctl -H {{ nvme_device }} | grep "SMART overall-health"
+          echo ""
+          
+          echo "NVMe Wear Level:"
+          nvme smart-log {{ nvme_device }} | grep "percentage_used"
+          echo ""
+          {% endif %}
+          
+          echo "Disk Usage:"
+          df -h / | grep -v Filesystem
+          echo ""
+          
+          echo "OMV Service Status:"
+          systemctl status openmediavault-engined --no-pager | grep Active
+          echo ""
+          
+          echo "Memory Usage:"
+          free -h
+          echo ""
+          
+          echo "Uptime:"
+          uptime
+          echo ""
+          
+          echo "=========================================="
+        mode: "0755"
+
+  post_tasks:
+    - name: Verify - Check monitoring timers
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      loop:
+        - nas-health-check.timer
+        - nvme-temp-monitor.timer
+      register: timer_status
+      failed_when: timer_status.status.ActiveState != 'active'
+      when: item != 'nvme-temp-monitor.timer' or nvme_device is defined
+
+    - name: Run initial health check
+      ansible.builtin.command:
+        cmd: /usr/local/bin/nas-health-check.sh
+      changed_when: false
+
+    - name: Display status dashboard
+      ansible.builtin.command:
+        cmd: /usr/local/bin/nas-status.sh
+      register: status_output
+      changed_when: false
+
+    - name: Stage 1 verification summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Monitoring Configuration Complete!"
+          - "=========================================="
+          - "{{ status_output.stdout_lines }}"
+          - "=========================================="
+          - "Monitoring Scripts:"
+          - "  - /usr/local/bin/nvme-temp-monitor.sh (every 10 min)"
+          - "  - /usr/local/bin/nas-health-check.sh (every hour)"
+          - "  - /usr/local/bin/nas-status.sh (manual)"
+          - ""
+          - "View Status:"
+          - "  sudo /usr/local/bin/nas-status.sh"
+          - ""
+          - "Check Logs:"
+          - "  tail -f /var/log/nvme-temp.log"
+          - "  tail -f /var/log/nas-health.log"
+          - "=========================================="

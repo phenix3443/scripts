@@ -1,0 +1,72 @@
+# Stage 9: Remove VPS PPanel-node software
+# Run from repo root:
+#   ansible-playbook -i ansible/inventory/vps.yml ansible/playbooks/vps/9-uninstall-ppanel-node.yml --vault-password-file ansible/.vault_pass
+
+- name: Stage 9 - Remove VPS PPanel-node software
+  hosts: vps_nodes
+  strategy: free
+  become: true
+  become_method: sudo
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../../group_vars/vps_nodes.yml"
+
+  tasks:
+    - name: Check connectivity
+      ansible.builtin.ping:
+
+    - name: Stop and disable ppanel-node service when present
+      ansible.builtin.systemd:
+        name: "{{ ppanel_node_service_name }}"
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove ppanel-node service unit
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ ppanel_node_service_name }}.service"
+        state: absent
+
+    - name: Remove ppanel-node install and config directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ ppanel_node_install_dir }}"
+        - "{{ ppanel_node_config_dir }}"
+
+    - name: Remove ppnode helper command
+      ansible.builtin.file:
+        path: /usr/bin/ppnode
+        state: absent
+
+    - name: Reload systemd after cleanup
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Verify ppanel-node binary is gone
+      ansible.builtin.shell: |
+        if [ -x "{{ ppanel_node_install_dir }}/ppnode" ]; then
+          echo present
+        else
+          echo absent
+        fi
+      register: ppanel_node_binary_check
+      changed_when: false
+
+    - name: Verify ppanel-node service is gone or inactive
+      ansible.builtin.shell: |
+        if systemctl list-unit-files | grep -q '^{{ ppanel_node_service_name }}\.service'; then
+          systemctl is-active {{ ppanel_node_service_name }} || true
+        else
+          echo absent
+        fi
+      register: ppanel_node_service_check
+      changed_when: false
+
+    - name: Display uninstall summary
+      ansible.builtin.debug:
+        msg:
+          - "Node: {{ inventory_hostname }}"
+          - "Binary: {{ ppanel_node_binary_check.stdout }}"
+          - "Service: {{ ppanel_node_service_check.stdout }}"

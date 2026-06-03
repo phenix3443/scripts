@@ -1,0 +1,20 @@
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: aria2.panghuli.tech
+      paths:
+        - path: /
+          pathType: Prefix
+ui_ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: ariang.panghuli.tech
+      paths:
+        - path: /
+          pathType: Prefix
+persistence:
+  enabled: true
+  storageClassName: longhorn
+  size: 10Gi

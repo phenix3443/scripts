@@ -1,0 +1,17 @@
+---
+# Encrypted vault variables for NAS servers
+# Copy this file to vault.yml and encrypt with:
+#   ansible-vault encrypt ansible/group_vars/nas_servers/vault.yml --vault-password-file ansible/.vault_pass
+
+# Cloudflare Tunnel token
+# Get this from: Cloudflare Zero Trust → Networks → Tunnels → Create Tunnel
+cloudflare_tunnel_token: "your-tunnel-token-here"
+
+# Email configuration for alerts (optional)
+smtp_host: "smtp.gmail.com"
+smtp_port: 587
+smtp_user: "your-email@gmail.com"
+smtp_password: "your-app-password"
+
+# Backup encryption key (optional)
+backup_encryption_key: "your-backup-encryption-key"

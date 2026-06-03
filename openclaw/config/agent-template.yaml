@@ -1,0 +1,132 @@
+# Template for creating additional OpenClaw Agent instances.
+# Copy this file, replace AGENT_NAME, and kubectl apply.
+#
+# Usage:
+#   cp agent-template.yaml agent-<name>.yaml
+#   sed -i '' 's/AGENT_NAME/<name>/g' agent-<name>.yaml
+#   kubectl apply -f agent-<name>.yaml
+apiVersion: openclaw.rocks/v1alpha1
+kind: OpenClawInstance
+metadata:
+  name: AGENT_NAME
+  namespace: openclaw
+spec:
+  envFrom:
+    - secretRef:
+        name: openclaw-api-keys
+    # - secretRef:
+    #     name: openclaw-channel-keys
+    # - secretRef:
+    #     name: openclaw-mem0-keys
+
+  config:
+    mergeMode: merge
+    raw:
+      gateway:
+        controlUi:
+          allowedOrigins:
+            - "https://AGENT_NAME.panghuli.tech"
+      models:
+        mode: merge
+        providers:
+          skyapi-claude:
+            baseUrl: "https://api.skyapi.org"
+            apiKey: "${SKYAPI_API_KEY}"
+            api: anthropic-messages
+            models:
+              - id: claude-sonnet-4-5
+                name: Claude Sonnet 4.5
+              - id: claude-haiku-4-5
+                name: Claude Haiku 4.5
+          skyapi-openai:
+            baseUrl: "https://api.skyapi.org/v1"
+            apiKey: "${SKYAPI_API_KEY}"
+            api: openai-completions
+            models:
+              - id: gpt-5
+                name: GPT-5
+          aliyun:
+            baseUrl: "https://coding.dashscope.aliyuncs.com/v1"
+            apiKey: "${ALIYUN_API_KEY}"
+            api: openai-completions
+            models:
+              - id: qwen3.5-plus
+                name: Qwen3.5 Plus
+              - id: qwen3-coder-plus
+                name: Qwen3 Coder Plus
+              - id: kimi-k2.5
+                name: Kimi K2.5
+              - id: glm-5
+                name: GLM-5
+      agents:
+        defaults:
+          model:
+            primary: "aliyun/qwen3.5-plus"
+            fallbacks:
+              - "aliyun/kimi-k2.5"
+              - "skyapi-claude/claude-sonnet-4-5"
+
+  # ClawHub registry currently unavailable; skills loaded from bundled set
+  # skills:
+  #   - "@anthropic/mcp-server-fetch"
+
+  runtimeDeps:
+    pnpm: true
+
+  chromium:
+    enabled: false
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+  storage:
+    persistence:
+      enabled: true
+      size: 10Gi
+
+  autoUpdate:
+    enabled: true
+    checkInterval: "24h"
+    backupBeforeUpdate: true
+    rollbackOnFailure: true
+
+  observability:
+    metrics:
+      enabled: false
+
+  security:
+    networkPolicy:
+      enabled: true
+      allowedIngressNamespaces:
+        - ingress-nginx
+      additionalEgress:
+        - to:
+            - ipBlock:
+                cidr: 0.0.0.0/0
+          ports:
+            - port: 80
+              protocol: TCP
+            - port: 443
+              protocol: TCP
+
+  availability:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: node.longhorn.io/create-default-disk
+                  operator: In
+                  values: ["true"]
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 80
+            preference:
+              matchExpressions:
+                - key: kubernetes.io/arch
+                  operator: In
+                  values: ["amd64"]

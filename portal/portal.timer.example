@@ -1,0 +1,12 @@
+[Unit]
+Description=Run portal auto-login every 10 minutes (only enable on corp network)
+Requires=portal.service
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,22 @@
+---
+# Inventory for NAS nodes (OpenMediaVault)
+# Run from repo root:
+#   ansible-playbook -i ansible/inventory/nas.yml ansible/playbooks/nas/0-omv-install.yml --vault-password-file ansible/.vault_pass
+
+all:
+  children:
+    nas_servers:
+      hosts:
+        nas1:
+          ansible_host: 192.168.1.100  # Replace with your Pi 5 IP
+          k3s_node_name: nas1
+          is_raspi: true
+          raspi_model: 5
+          nvme_device: /dev/nvme0n1
+          # Optional: partition layout for data separation
+          # nvme_create_data_partition: true
+          # nvme_data_partition_start: 100GB
+      vars:
+        ansible_user: lsl  # Replace with your user
+        ansible_python_interpreter: /usr/bin/python3
+        # ansible_ssh_private_key_file: ~/.ssh/your_pi_key

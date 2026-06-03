@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tmpfs-monitor-script
+  namespace: kube-system
+data:
+  check.sh: |
+    #!/bin/sh
+    while true; do
+      if [ -f /.tmpfs-fallback-mode ]; then
+        echo "$(date) ALERT: Node $(hostname) is in tmpfs fallback mode!"
+      fi
+      sleep 300
+    done
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: tmpfs-fallback-monitor
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: tmpfs-monitor
+  template:
+    metadata:
+      labels:
+        app: tmpfs-monitor
+    spec:
+      hostPID: true
+      hostNetwork: true
+      containers:
+      - name: monitor
+        image: busybox:1.36
+        command: ["/bin/sh", "/scripts/check.sh"]
+        volumeMounts:
+        - name: root
+          mountPath: /host
+          readOnly: true
+        - name: script
+          mountPath: /scripts
+      volumes:
+      - name: root
+        hostPath:
+          path: /
+      - name: script
+        configMap:
+          name: tmpfs-monitor-script
+          defaultMode: 0755

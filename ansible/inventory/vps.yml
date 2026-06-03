@@ -1,0 +1,16 @@
+---
+all:
+  children:
+    vps_nodes:
+      hosts:
+        netcup:
+          ansible_host: v2202506281468351398.goodsrv.de
+          node_name: netcup-us
+          node_location: "US"
+        netcup-nl:
+          ansible_host: v2202602281468431064.bestsrv.de
+          node_name: netcup-nl
+          node_location: "NL"
+      vars:
+        ansible_user: lsl
+        ansible_python_interpreter: /usr/bin/python3

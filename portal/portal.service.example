@@ -1,0 +1,13 @@
+[Unit]
+Description=Corporate portal auto-login (detect and login if redirected)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@SCRIPT_DIR@
+ExecStart=@SCRIPT_PATH@ run
+# 若门户为自签名证书，取消下一行注释
+# Environment="CURL_OPTS=-k"
+StandardOutput=journal
+StandardError=journal

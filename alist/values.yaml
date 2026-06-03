@@ -1,0 +1,22 @@
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: alist.panghuli.tech
+      paths:
+        - path: /
+          pathType: Prefix
+persistence:
+  enabled: true
+  storageClassName: longhorn
+  size: 10Gi
+
+config:
+  site_url: "alist.panghuli.tech"
+  database:
+    type: mysql
+    host: mysql
+    port: 3306
+    user: alist
+    password: alist@MySQL2023
+    name: alist

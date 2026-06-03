@@ -1,0 +1,129 @@
+---
+# Stage 2: Install and configure Cloudflare Tunnel for remote access
+# Prerequisites:
+#   - Cloudflare account with a domain
+#   - Tunnel created in Cloudflare Zero Trust dashboard
+#   - TUNNEL_TOKEN stored in vault
+#
+# Run from repo root:
+#   ansible-playbook -i ansible/inventory/nas.yml ansible/playbooks/nas/2-cloudflare-tunnel.yml --vault-password-file ansible/.vault_pass
+#
+# Required vault vars in group_vars/nas_servers/vault.yml:
+#   cloudflare_tunnel_token: "your-tunnel-token"
+
+- name: Stage 2 - Install Cloudflare Tunnel
+  hosts: nas_servers
+  become: true
+  become_method: sudo
+  gather_facts: true
+  vars_files:
+    - "{{ playbook_dir }}/../../group_vars/nas_servers/vault.yml"
+  vars:
+    cloudflared_version: latest
+    cloudflared_deb_url: https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64.deb
+  
+  tasks:
+    - name: Check if cloudflared is already installed
+      ansible.builtin.command:
+        cmd: cloudflared --version
+      register: cloudflared_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install cloudflared
+      when: cloudflared_check.rc != 0
+      block:
+        - name: Download cloudflared package
+          ansible.builtin.get_url:
+            url: "{{ cloudflared_deb_url }}"
+            dest: /tmp/cloudflared.deb
+            mode: "0644"
+
+        - name: Install cloudflared package
+          ansible.builtin.apt:
+            deb: /tmp/cloudflared.deb
+            state: present
+
+        - name: Remove downloaded package
+          ansible.builtin.file:
+            path: /tmp/cloudflared.deb
+            state: absent
+
+    - name: Create cloudflared config directory
+      ansible.builtin.file:
+        path: /etc/cloudflared
+        state: directory
+        mode: "0755"
+
+    - name: Deploy cloudflared config
+      ansible.builtin.copy:
+        dest: /etc/cloudflared/config.yml
+        content: |
+          tunnel: {{ cloudflare_tunnel_token.split(':')[0] if ':' in cloudflare_tunnel_token else 'auto' }}
+          credentials-file: /etc/cloudflared/credentials.json
+        mode: "0644"
+      when: cloudflare_tunnel_token is defined
+
+    - name: Install cloudflared as a service
+      ansible.builtin.command:
+        cmd: cloudflared service install {{ cloudflare_tunnel_token }}
+      args:
+        creates: /etc/systemd/system/cloudflared.service
+      when: cloudflare_tunnel_token is defined
+
+    - name: Enable and start cloudflared service
+      ansible.builtin.systemd:
+        name: cloudflared
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+    - name: Wait for cloudflared to connect
+      ansible.builtin.wait_for:
+        timeout: 30
+      changed_when: false
+
+  post_tasks:
+    - name: Verify - Check cloudflared version
+      ansible.builtin.command:
+        cmd: cloudflared --version
+      register: cloudflared_version_output
+      changed_when: false
+
+    - name: Verify - Check cloudflared service
+      ansible.builtin.systemd:
+        name: cloudflared
+      register: cloudflared_service
+      failed_when: cloudflared_service.status.ActiveState != 'active'
+
+    - name: Verify - Check cloudflared tunnel status
+      ansible.builtin.command:
+        cmd: cloudflared tunnel info
+      register: tunnel_info
+      changed_when: false
+      failed_when: false
+
+    - name: Stage 2 verification summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Cloudflare Tunnel Installation Complete!"
+          - "=========================================="
+          - "✓ Cloudflared Version: {{ cloudflared_version_output.stdout }}"
+          - "✓ Service Status: {{ cloudflared_service.status.ActiveState }}"
+          - "=========================================="
+          - "Next Steps:"
+          - "1. Go to Cloudflare Zero Trust Dashboard"
+          - "2. Navigate to Networks → Tunnels"
+          - "3. Verify your tunnel is connected"
+          - "4. Configure Public Hostname:"
+          - "   - Subdomain: nas (or your choice)"
+          - "   - Domain: yourdomain.com"
+          - "   - Service: http://localhost:80"
+          - "5. Access OMV: https://nas.yourdomain.com"
+          - "=========================================="
+          - "Useful Commands:"
+          - "  sudo systemctl status cloudflared"
+          - "  sudo journalctl -u cloudflared -f"
+          - "  cloudflared tunnel info"
+          - "=========================================="

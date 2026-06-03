@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "../../../phenix3443/ppanel/ppanel-frontend"
+		},
+		{
+			"path": "../../../phenix3443/ppanel/ppanel-server"
+		},
+		{
+			"path": "../../../phenix3443/ppanel/ppanel"
+		}
+	],
+	"settings": {
+		"typescript.tsdk": "node_modules/typescript/lib",
+		"emmet.showExpandedAbbreviation": "never"
+	}
+}

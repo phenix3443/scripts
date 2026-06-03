@@ -1,0 +1,10 @@
+Log:
+  Level: {{ ppanel_node_log_level }}
+  Output: {{ ppanel_node_log_output | to_json }}
+  Access: {{ ppanel_node_access_log }}
+
+Api:
+  ApiHost: {{ ppanel_node_api_host }}
+  ServerID: {{ ppanel_node_server_id }}
+  SecretKey: {{ ppanel_node_secret_key }}
+  Timeout: {{ ppanel_node_timeout }}
